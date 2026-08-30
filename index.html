@@ -134,7 +134,7 @@
     outline: none; border-color: var(--laiton);
   }
 
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .chip {
     background: var(--eau-surface); border: 1px solid var(--eau-bord);
     color: var(--muted); border-radius: 20px; padding: 8px 13px;
@@ -142,6 +142,31 @@
   }
   .chip[data-on="1"] { color: var(--eau); background: var(--laiton); border-color: var(--laiton); font-weight: 600; }
   .chip:focus-visible { outline: 2px solid var(--laiton); outline-offset: 2px; }
+  .chip.sm { padding: 6px 10px; font-size: 11.5px; }
+
+  /* ---- bloc apport de bois / eau ---- */
+  .bloc {
+    background: var(--eau-surface); border: 1px solid var(--eau-bord);
+    border-radius: 10px; padding: 12px; margin-bottom: 10px;
+  }
+  .bloc .row:last-child { margin-bottom: 0; }
+  .bloc-hd {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 8px; margin-bottom: 10px;
+  }
+  .bloc-hd b { font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .bloc-hd .kg { font-family: var(--mono); font-size: 13px; color: var(--laiton); margin-left: auto; }
+  .bloc-hd .del {
+    background: none; border: 1px solid var(--eau-bord); color: var(--muted);
+    border-radius: 7px; width: 28px; height: 28px; cursor: pointer; font-size: 15px; flex: none;
+  }
+  .bloc input, .bloc select { background: var(--eau); }
+  .tot {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-family: var(--mono); font-size: 13px; color: var(--laiton);
+    padding: 2px 2px 0;
+  }
+  .tot small { color: var(--muted); font-size: 11px; }
 
   /* ---- signature : jauge d'écart ---- */
   .jauge {
@@ -192,15 +217,27 @@
   }
   .btn.cold { background: var(--glacier); color: var(--eau); }
   .btn.ghost { background: transparent; border: 1px solid var(--eau-bord); color: var(--muted); font-weight: 500; font-size: 13px; padding: 11px; }
+  .btn.tiny { margin-top: 4px; padding: 9px; font-size: 12.5px; }
   .btn:focus-visible { outline: 2px solid var(--texte); outline-offset: 2px; }
 
   /* ---- relevés de refroidissement ---- */
-  .rlv { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
+  .rlv { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 6px; }
   .rlv > label { flex: 1; }
   .rlv .del {
     background: none; border: 1px solid var(--eau-bord); color: var(--muted);
     border-radius: 8px; width: 40px; height: 40px; cursor: pointer; font-size: 17px; flex: none;
   }
+  .sous { padding-left: 2px; margin: -2px 0 12px; }
+  .sous .lien {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 11.5px; padding: 2px 0; text-decoration: underline; font-family: var(--sans);
+  }
+  .eaubloc {
+    background: var(--eau-surface); border: 1px solid var(--eau-bord);
+    border-radius: 9px; padding: 10px; margin: 4px 0 12px;
+  }
+  .eaubloc .row { margin-bottom: 0; }
+  .eaubloc input, .eaubloc select { background: var(--eau); }
 
   /* ---- bilan ---- */
   .card {
@@ -234,34 +271,106 @@
 
 <script>
 (function () {
-  var CLE = 'bain-nordique:v1';
-  var CAP = 1.163;          // Wh pour élever 1 L de 1 °C
-  var PCI_SEC = 5.14;       // kWh/kg de bois anhydre
-  var VAP = 0.68;           // kWh/kg d'eau à vaporiser
+  var CLE = 'bain-nordique:v1';   // même clé : les anciennes données sont relues et converties
+  var CAP = 1.163;                // Wh pour élever 1 L de 1 °C
+  var PCI_SEC = 5.14;             // kWh/kg de bois anhydre
+  var VAP = 0.68;                 // kWh/kg d'eau à vaporiser
 
-  var D = { volume: 850, chauffes: [], froids: [] };
+  // Masse volumique apparente du bois plein, à 20 % d'humidité sur brut (kg/m³).
+  // Ordres de grandeur usuels — à recaler si tu pèses une brouette un jour.
+  var DENS = {
+    'Chêne': 750, 'Hêtre': 730, 'Charme': 800, 'Frêne': 700,
+    'Bouleau': 650, 'Châtaignier': 600, 'Robinier': 780,
+    'Saule / peuplier': 450, 'Résineux': 480, 'Mixte feuillus': 700
+  };
+  var ESSENCES = Object.keys(DENS);
+
+  var D = {
+    volume: 850,      // volume de référence du bain, en litres
+    volBr: 85,        // contenance d'une brouette, en litres
+    taux: 60,         // part réellement occupée par le bois dans la brouette, en %
+    chauffes: [], froids: []
+  };
   var onglet = 'chauffe';
   var app = document.getElementById('app');
 
   /* ---------- utilitaires ---------- */
   function n(v) { var x = parseFloat(String(v).replace(',', '.')); return isFinite(x) ? x : null; }
-  function f(x, d) { return x === null || !isFinite(x) ? '—' : x.toFixed(d === undefined ? 1 : d); }
+  function f(x, d) { return x === null || x === undefined || !isFinite(x) ? '—' : x.toFixed(d === undefined ? 1 : d); }
   function auj() { return new Date().toISOString().slice(0, 10); }
-  function hm() { var d = new Date(); return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); }
   function heures(a, b) {
     if (!a || !b) return null;
     var pa = a.split(':'), pb = b.split(':');
     var d = (+pb[0] * 60 + +pb[1]) - (+pa[0] * 60 + +pa[1]);
-    if (d < 0) d += 1440;               // chauffe passant minuit
+    if (d < 0) d += 1440;               // séance passant minuit
     return d / 60;
   }
-  function pci(h) {
-    var x = (h === null ? 20 : h) / 100;
+  function pci(h) {                      // kWh utiles par kg de bois tel quel
+    var x = (h === null || h === undefined ? 20 : h) / 100;
     if (x < 0) x = 0; if (x > 0.65) x = 0.65;
     return PCI_SEC * (1 - x) - VAP * x;
   }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  /* ---------- bois ---------- */
+  // Masse d'un apport. Le volume de bois plein est converti en kg avec la masse
+  // volumique de l'essence, corrigée de l'humidité (référence : 20 % sur brut).
+  function kgApport(a, hum) {
+    if (!a) return 0;
+    var vol;   // m³ de bois plein
+    if (a.mode === 'Bûches') {
+      var r = (a.diam || 0) / 200;                       // rayon en m
+      vol = (a.nb || 0) * Math.PI * r * r * ((a.len || 0) / 100);
+    } else {
+      vol = (a.br || 0) * (D.volBr / 1000) * (D.taux / 100);
+    }
+    var rho = DENS[a.essence] || 700;
+    var H = (hum === null || hum === undefined ? 20 : hum) / 100;
+    if (H < 0) H = 0; if (H > 0.65) H = 0.65;
+    return vol * rho * 0.8 / (1 - H);
+  }
+  function kgTotal(c) {
+    if (Array.isArray(c.bois)) {
+      return c.bois.reduce(function (s, a) { return s + kgApport(a, c.hum); }, 0);
+    }
+    return c.kg || 0;                                    // anciennes fiches
+  }
+  function essenceDe(c) {
+    if (!Array.isArray(c.bois)) return c.essence || '—';
+    var l = c.bois.filter(function (a) { return kgApport(a, c.hum) > 0; })
+                  .map(function (a) { return a.essence; });
+    if (!l.length) return 'Sans bois';
+    var u = l.filter(function (v, i) { return l.indexOf(v) === i; });
+    return u.length === 1 ? u[0] : 'Mélange';
+  }
+  function resumeBois(c) {
+    if (!Array.isArray(c.bois)) return esc(c.essence || '') + ' ' + f(c.kg) + ' kg';
+    var l = c.bois.filter(function (a) { return kgApport(a, c.hum) > 0; }).map(function (a) {
+      return a.mode === 'Bûches'
+        ? a.nb + ' bûches de ' + a.len + ' cm ' + esc(a.essence).toLowerCase()
+        : frac(a.br) + ' brouette ' + esc(a.essence).toLowerCase();
+    });
+    return l.length ? l.join(' + ') : 'sans bois';
+  }
+  function frac(x) {
+    var m = { 0.25: '¼', 0.5: '½', 0.75: '¾', 1: '1', 1.5: '1½', 2: '2', 3: '3' };
+    return m[x] !== undefined ? m[x] : String(x);
+  }
+
+  /* ---------- eau : volume et mélange ---------- */
+  function volDe(o) { return (o && o.vol) ? o.vol : D.volume; }
+
+  // Mélange : renvoie { t: température après apport, v: volume après apport }
+  function melange(V, T, L, Ta, mode) {
+    if (!L || L <= 0 || Ta === null || Ta === undefined || T === null) return { t: T, v: V };
+    if (mode === 'En plus') {
+      var Vn = V + L;
+      return { t: (V * T + L * Ta) / Vn, v: Vn };
+    }
+    var Vr = Math.max(0, V - L);                          // vidangé puis recomplété
+    return { t: (Vr * T + L * Ta) / V, v: V };
+  }
 
   /* ---------- stockage ---------- */
   function charger() {
@@ -270,6 +379,8 @@
       if (brut) {
         var o = JSON.parse(brut);
         D.volume = o.volume || 850;
+        D.volBr = o.volBr || 85;
+        D.taux = o.taux || 60;
         D.chauffes = o.chauffes || [];
         D.froids = o.froids || [];
       }
@@ -291,55 +402,133 @@
     setTimeout(function () { if (e.textContent === msg) e.textContent = ''; }, 3200);
   }
 
-  /* ---------- calculs ---------- */
+  /* ---------- calculs : chauffe ---------- */
   function calcChauffe(c) {
-    var dT = (c.t2 !== null && c.t1 !== null) ? c.t2 - c.t1 : null;
+    var V0 = volDe(c);
+    var m = melange(V0, c.t1, c.ajL, c.ajT, c.ajMode);
+    var tdep = m.t, V1 = m.v;
+    var dT = (c.t2 !== null && tdep !== null) ? c.t2 - tdep : null;
     var h = heures(c.h1, c.h2);
-    var kwh = dT !== null ? D.volume * dT * CAP / 1000 : null;
+    var kwh = dT !== null ? V1 * dT * CAP / 1000 : null;
     var vit = (dT !== null && h) ? dT / h : null;
-    var kwhkg = (kwh !== null && c.kg) ? kwh / c.kg : null;
-    var kgdeg = (c.kg && dT) ? c.kg / dT : null;
-    var rend = (kwh !== null && c.kg) ? 100 * kwh / (c.kg * pci(c.hum)) : null;
-    return { dT: dT, h: h, kwh: kwh, vit: vit, kwhkg: kwhkg, kgdeg: kgdeg, rend: rend };
+    var kg = kgTotal(c);
+    var kwhkg = (kwh !== null && kg) ? kwh / kg : null;
+    var kgdeg = (kg && dT) ? kg / dT : null;
+    var rend = (kwh !== null && kg) ? 100 * kwh / (kg * pci(c.hum)) : null;
+    return { dT: dT, tdep: tdep, vol: V1, h: h, kwh: kwh, vit: vit,
+             kwhkg: kwhkg, kgdeg: kgdeg, rend: rend, kg: kg };
   }
 
-  // Loi de refroidissement : (T - Text) décroît de façon exponentielle.
-  // k en h⁻¹ ; perte instantanée = k × écart.
+  /* ---------- calculs : refroidissement ---------- */
+  // Courbe extérieure : tous les relevés d'extérieur + le mini de la nuit,
+  // reliés en segments droits. On en tire la moyenne réellement vue par le bain
+  // sur chaque intervalle, au lieu d'une seule valeur prise au petit matin.
+  function courbeExt(r, pts, t) {
+    var c = [];
+    pts.forEach(function (p, i) {
+      if (p.tx !== null && p.tx !== undefined) c.push({ t: t[i], x: p.tx });
+    });
+    if (r.mini && r.mini.h && r.mini.t !== null && r.mini.t !== undefined) {
+      var tm = heures(pts[0].h, r.mini.h);
+      if (tm !== null) c.push({ t: tm, x: r.mini.t });
+    }
+    c.sort(function (a, b) { return a.t - b.t; });
+    return c;
+  }
+  function valExt(c, t) {
+    if (!c.length) return null;
+    if (t <= c[0].t) return c[0].x;
+    if (t >= c[c.length - 1].t) return c[c.length - 1].x;
+    for (var i = 1; i < c.length; i++) {
+      if (t <= c[i].t) {
+        var d = c[i].t - c[i - 1].t;
+        if (d <= 0) return c[i].x;
+        return c[i - 1].x + (t - c[i - 1].t) / d * (c[i].x - c[i - 1].x);
+      }
+    }
+    return c[c.length - 1].x;
+  }
+  function extMoy(c, a, b) {
+    if (!c.length || b <= a) return c.length ? valExt(c, a) : null;
+    var bs = [a];
+    c.forEach(function (p) { if (p.t > a && p.t < b) bs.push(p.t); });
+    bs.push(b);
+    var s = 0;
+    for (var i = 1; i < bs.length; i++) {
+      s += (valExt(c, bs[i - 1]) + valExt(c, bs[i])) / 2 * (bs[i] - bs[i - 1]);
+    }
+    return s / (b - a);
+  }
+
   function calcFroid(r) {
-    var pts = (r.pts || []).filter(function (p) { return p.h && p.te !== null && p.tx !== null; });
-    var ks = [], tot = 0, dur = 0;
-    for (var i = 1; i < pts.length; i++) {
-      var dt = heures(pts[i - 1].h, pts[i].h);
-      var e1 = pts[i - 1].te - pts[i - 1].tx;
-      var e2 = pts[i].te - pts[i].tx;
-      if (dt > 0 && e1 > 0.3 && e2 > 0.3 && e2 < e1) ks.push(Math.log(e1 / e2) / dt);
+    var pts = (r.pts || []).filter(function (p) { return p.h && p.te !== null && p.te !== undefined; });
+    var vide = { k: null, n: pts.length, perte: null, demi: null, ecMoy: null, extMoy: null, volFin: volDe(r) };
+    if (pts.length < 2) return vide;
+
+    var t = pts.map(function (p) { return heures(pts[0].h, p.h); });
+    for (var i = 1; i < t.length; i++) if (t[i] <= t[i - 1]) t[i] = t[i - 1] + 0.0001;
+
+    var c = courbeExt(r, pts, t);
+    var V = volDe(r);
+    var ks = [], poids = 0, somme = 0;
+
+    for (var j = 1; j < pts.length; j++) {
+      var dt = t[j] - t[j - 1];
+      var p = pts[j];
+      var dep = pts[j - 1].te;
+      if (p.ajL > 0 && p.ajT !== null && p.ajT !== undefined) {
+        var m = melange(V, dep, p.ajL, p.ajT, p.ajMode);   // apport juste après le relevé précédent
+        dep = m.t; V = m.v;
+      }
+      var Tx = extMoy(c, t[j - 1], t[j]);
+      if (Tx === null || !(dt > 0)) continue;
+      var e1 = dep - Tx, e2 = p.te - Tx;
+      if (e1 > 0.3 && e2 > 0.3 && e2 < e1) {
+        var kk = Math.log(e1 / e2) / dt;
+        ks.push(kk); somme += kk * dt; poids += dt;
+      }
     }
-    if (pts.length >= 2) {
-      tot = pts[0].te - pts[pts.length - 1].te;
-      dur = heures(pts[0].h, pts[pts.length - 1].h);
-    }
-    var k = ks.length ? ks.reduce(function (a, b) { return a + b; }, 0) / ks.length : null;
-    var ecMoy = pts.length ? pts.reduce(function (a, p) { return a + (p.te - p.tx); }, 0) / pts.length : null;
+
+    var k = poids > 0 ? somme / poids : null;
+    var dur = t[t.length - 1] - t[0];
+    var extM = extMoy(c, t[0], t[t.length - 1]);
+    var ecMoy = extM !== null ? ((pts[0].te + pts[pts.length - 1].te) / 2 - extM) : null;
     return {
-      k: k, n: pts.length,
-      perte: dur > 0 ? tot / dur : null,
+      k: k, n: pts.length, nInt: ks.length,
+      perte: dur > 0 ? (pts[0].te - pts[pts.length - 1].te) / dur : null,
       demi: k ? Math.log(2) / k : null,
-      ecMoy: ecMoy
+      ecMoy: ecMoy, extMoy: extM, volFin: V,
+      mini: !!(r.mini && r.mini.h && r.mini.t !== null && r.mini.t !== undefined)
     };
   }
 
   /* ---------- état des formulaires ---------- */
-  var fc = { date: auj(), h1: '', h2: '', t1: null, t2: null, tx: null,
-             poele: 'Les deux', essence: 'Chêne', kg: null, hum: null,
-             couv: 'Non', ciel: 'Couvert', vent: 'Léger', note: '' };
-  var ff = { date: auj(), couv: 'Oui', pts: [ { h: '', te: null, tx: null }, { h: '', te: null, tx: null } ], note: '' };
+  function apportVide(essence) {
+    return { essence: essence || 'Chêne', mode: 'Brouette', br: 1, nb: 6, len: 30, diam: 10 };
+  }
+  function chauffeVide(prec) {
+    prec = prec || {};
+    return { date: auj(), h1: '', h2: '', t1: null, t2: null, tx: prec.tx === undefined ? null : prec.tx,
+             vol: null, ajL: null, ajT: null, ajMode: 'Remplacement',
+             poele: prec.poele || 'Les deux', hum: prec.hum === undefined ? 20 : prec.hum,
+             bois: [apportVide(prec.essence)],
+             couv: prec.couv || 'Non', ciel: prec.ciel || 'Couvert', vent: prec.vent || 'Léger', note: '' };
+  }
+  function froidVide(prec) {
+    prec = prec || {};
+    return { date: auj(), couv: prec.couv || 'Oui', vol: null,
+             pts: [ { h: '', te: null, tx: null }, { h: '', te: null, tx: null } ],
+             mini: { t: null, h: '' }, note: '' };
+  }
+  var fc = chauffeVide();
+  var ff = froidVide();
 
   /* ---------- rendu ---------- */
   function vue() {
     app.innerHTML =
       '<div class="hd">' +
         '<div><h1>Carnet du bain</h1><p>Chauffe, refroidissement, bois</p></div>' +
-        '<div class="vol"><input id="vol" type="number" inputmode="decimal" value="' + D.volume + '" aria-label="Volume d\'eau en litres"> L</div>' +
+        '<div class="vol"><input id="vol" type="number" inputmode="decimal" value="' + D.volume + '" aria-label="Volume de référence en litres"> L</div>' +
       '</div>' +
       '<div class="tabs">' +
         tab('chauffe', 'Chauffe') + tab('froid', 'Refroidissement') + tab('bilan', 'Bilan') +
@@ -353,8 +542,9 @@
   function tab(k, t) {
     return '<button class="tab" data-k="' + k + '" data-on="' + (onglet === k ? 1 : 0) + '">' + t + '</button>';
   }
-  function ch(champ, val, cour) {
-    return '<button class="chip" data-chip="' + champ + '" data-val="' + esc(val) + '" data-on="' + (cour === val ? 1 : 0) + '">' + esc(val) + '</button>';
+  function ch(champ, val, cour, lib, sm) {
+    return '<button class="chip' + (sm ? ' sm' : '') + '" data-chip="' + champ + '" data-val="' + esc(val) +
+      '" data-on="' + (String(cour) === String(val) ? 1 : 0) + '">' + esc(lib === undefined ? val : lib) + '</button>';
   }
   function inp(cle, lib, type, val, form) {
     var v = val === null || val === undefined ? '' : val;
@@ -363,6 +553,7 @@
       ' value="' + esc(v) + '"></label>';
   }
 
+  /* --- panneau chauffe --- */
   function panChauffe() {
     var r = calcChauffe(fc);
     return '' +
@@ -373,25 +564,40 @@
         inp('h2', 'Feu éteint', 'time', fc.h2, 'c') + '</div>' +
       '<div class="row">' + inp('t1', 'Eau au départ °C', 'number', fc.t1, 'c') +
         inp('t2', 'Eau à l\'arrivée °C', 'number', fc.t2, 'c') + '</div>' +
+
+      '<div class="lg">Niveau et eau ajoutée</div>' +
+      '<div class="row">' +
+        '<label class="f"><span>Volume dans le bain L</span><input data-form="c" data-cle="vol" type="number" inputmode="decimal" step="1" placeholder="' + D.volume + '" value="' + (fc.vol === null || fc.vol === undefined ? '' : fc.vol) + '"></label>' +
+        inp('ajL', 'Eau ajoutée L', 'number', fc.ajL, 'c') +
+        inp('ajT', 'à °C', 'number', fc.ajT, 'c') +
+      '</div>' +
+      '<div class="chips">' + ['Remplacement', 'En plus'].map(function (v) {
+        return ch('ajMode', v, fc.ajMode, v === 'Remplacement' ? 'Vidangé puis recomplété' : 'Le niveau monte', true); }).join('') + '</div>' +
+      '<p class="note" style="margin-top:8px">Départ corrigé du mélange : <b id="tdep">' + f(r.tdep) + '</b> °C dans <b id="vfin">' + f(r.vol, 0) + '</b> L. C\'est ce départ-là qui sert au calcul, pas la température lue avant le remplissage.</p>' +
+
       jauge(fc.tx, fc.t2) +
+
       '<div class="lg">Chauffe utilisée</div>' +
       '<div class="chips">' + ['Poêle 1', 'Poêle 2', 'Les deux', 'Serpentin seul'].map(function (v) { return ch('poele', v, fc.poele); }).join('') + '</div>' +
-      '<div class="lg">Bois</div>' +
-      '<div class="row">' +
-        '<label class="f"><span>Essence</span><select data-form="c" data-cle="essence">' +
-          ['Chêne', 'Hêtre', 'Charme', 'Frêne', 'Bouleau', 'Châtaignier', 'Résineux', 'Mixte', 'Aucun'].map(function (e) {
-            return '<option' + (fc.essence === e ? ' selected' : '') + '>' + e + '</option>'; }).join('') +
-        '</select></label>' +
-        inp('kg', 'Masse kg', 'number', fc.kg, 'c') +
-        inp('hum', 'Humidité %', 'number', fc.hum, 'c') +
-      '</div>' +
+
+      '<div class="lg">Bois brûlé</div>' +
+      fc.bois.map(blocBois).join('') +
+      '<button class="btn ghost tiny" data-act="add-b">+ Ajouter un apport</button>' +
+      '<div class="tot" style="margin-top:12px"><span>Total estimé</span><b id="kgtot">' + f(r.kg, 1) + ' kg</b></div>' +
+      '<div class="lg">Humidité du bois</div>' +
+      '<div class="chips" style="margin-bottom:10px">' +
+        [[15, 'Très sec 15 %'], [20, 'Sec 20 %'], [25, 'Correct 25 %'], [35, 'Humide 35 %']].map(function (v) {
+          return ch('hum', v[0], fc.hum, v[1], true); }).join('') + '</div>' +
+      '<div class="row">' + inp('hum', 'ou saisis la valeur %', 'number', fc.hum, 'c') + '</div>' +
+
       '<div class="lg">Conditions</div>' +
       '<div class="chips" style="margin-bottom:8px">' + ['Soleil', 'Éclaircies', 'Couvert', 'Pluie'].map(function (v) { return ch('ciel', v, fc.ciel); }).join('') + '</div>' +
       '<div class="chips" style="margin-bottom:8px">' + ['Vent nul', 'Léger', 'Fort'].map(function (v) { return ch('vent', v, fc.vent); }).join('') + '</div>' +
       '<div class="chips">Couverture&nbsp;' + ['Oui', 'Non'].map(function (v) { return ch('couv', v, fc.couv); }).join('') + '</div>' +
       '<div style="margin-top:12px">' + inp('note', 'Notes', 'text', fc.note, 'c') + '</div>' +
+
       '<div class="res">' +
-        cel('Gain', f(r.dT) + '<em>°C</em>', 'hot') +
+        cel('Gain utile', f(r.dT) + '<em>°C</em>', 'hot') +
         cel('Durée', f(r.h) + '<em>h</em>', '') +
         cel('Vitesse', f(r.vit) + '<em>°C/h</em>', 'hot') +
         cel('Énergie dans l\'eau', f(r.kwh, 2) + '<em>kWh</em>', '') +
@@ -399,8 +605,40 @@
         cel('Bois par degré', f(r.kgdeg, 2) + '<em>kg/°C</em>', '') +
       '</div>' +
       '<button class="btn" data-act="save-c">Enregistrer la chauffe</button>' +
-      '<p class="note">Le rendement estimé de l\'installation est calculé au bilan, à partir de l\'humidité saisie (20 % par défaut).</p>';
+      '<p class="note">Les kilos sont estimés à partir du volume et de l\'essence : ce sont des ordres de grandeur, pas une pesée. Pèse une brouette une fois et cale les réglages du bilan dessus, tout le carnet se recalcule.</p>';
   }
+
+  function blocBois(a, i) {
+    var kg = kgApport(a, fc.hum);
+    var h = '<div class="bloc">' +
+      '<div class="bloc-hd"><b>Apport ' + (i + 1) + '</b>' +
+        '<span class="kg" data-kg="' + i + '">≈ ' + f(kg, 1) + ' kg</span>' +
+        (fc.bois.length > 1 ? '<button class="del" data-act="del-b" data-i="' + i + '" aria-label="Supprimer cet apport">×</button>' : '') +
+      '</div>' +
+      '<div class="row"><label class="f"><span>Essence</span><select data-b="' + i + '" data-cle="essence">' +
+        ESSENCES.map(function (e) { return '<option' + (a.essence === e ? ' selected' : '') + '>' + e + '</option>'; }).join('') +
+      '</select></label></div>' +
+      '<div class="chips" style="margin-bottom:10px">' +
+        ['Brouette', 'Bûches'].map(function (v) {
+          return '<button class="chip sm" data-bmode="' + i + '" data-val="' + v + '" data-on="' + (a.mode === v ? 1 : 0) + '">' + v + '</button>'; }).join('') +
+      '</div>';
+
+    if (a.mode === 'Bûches') {
+      h += '<div class="row">' +
+        '<label class="f"><span>Nombre</span><input data-b="' + i + '" data-cle="nb" type="number" inputmode="numeric" step="1" value="' + (a.nb === null ? '' : a.nb) + '"></label>' +
+        '<label class="f"><span>Longueur cm</span><input data-b="' + i + '" data-cle="len" type="number" inputmode="decimal" step="1" value="' + (a.len === null ? '' : a.len) + '"></label>' +
+        '<label class="f"><span>Ø moyen cm</span><input data-b="' + i + '" data-cle="diam" type="number" inputmode="decimal" step="0.5" value="' + (a.diam === null ? '' : a.diam) + '"></label>' +
+      '</div>' +
+      '<div class="chips">' + [30, 40, 50].map(function (v) {
+        return '<button class="chip sm" data-blen="' + i + '" data-val="' + v + '" data-on="' + (a.len === v ? 1 : 0) + '">' + v + ' cm</button>'; }).join('') + '</div>';
+    } else {
+      h += '<div class="chips" style="margin-bottom:10px">' + [0.25, 0.5, 0.75, 1, 1.5, 2].map(function (v) {
+        return '<button class="chip sm" data-bfrac="' + i + '" data-val="' + v + '" data-on="' + (a.br === v ? 1 : 0) + '">' + frac(v) + '</button>'; }).join('') + '</div>' +
+      '<div class="row"><label class="f"><span>ou en brouettes</span><input data-b="' + i + '" data-cle="br" type="number" inputmode="decimal" step="0.25" value="' + (a.br === null ? '' : a.br) + '"></label></div>';
+    }
+    return h + '</div>';
+  }
+
   function cel(lib, val, cls) { return '<div class="' + cls + '"><span>' + lib + '</span><b>' + val + '</b></div>'; }
 
   function jauge(tx, te) {
@@ -416,26 +654,52 @@
     '</div>';
   }
 
+  /* --- panneau refroidissement --- */
   function panFroid() {
     var r = calcFroid(ff);
     var lignes = ff.pts.map(function (p, i) {
-      return '<div class="rlv">' +
+      var h = '<div class="rlv">' +
         '<label class="f"><span>' + (i === 0 ? 'Feu éteint à' : 'Relevé ' + i) + '</span>' +
           '<input data-pt="' + i + '" data-cle="h" type="time" value="' + esc(p.h) + '"></label>' +
-        '<label class="f"><span>Eau °C</span><input data-pt="' + i + '" data-cle="te" type="number" inputmode="decimal" step="0.1" value="' + (p.te === null ? '' : p.te) + '"></label>' +
-        '<label class="f"><span>Ext. °C</span><input data-pt="' + i + '" data-cle="tx" type="number" inputmode="decimal" step="0.1" value="' + (p.tx === null ? '' : p.tx) + '"></label>' +
+        '<label class="f"><span>Eau °C</span><input data-pt="' + i + '" data-cle="te" type="number" inputmode="decimal" step="0.1" value="' + (p.te === null || p.te === undefined ? '' : p.te) + '"></label>' +
+        '<label class="f"><span>Ext. °C</span><input data-pt="' + i + '" data-cle="tx" type="number" inputmode="decimal" step="0.1" value="' + (p.tx === null || p.tx === undefined ? '' : p.tx) + '"></label>' +
         (ff.pts.length > 2 ? '<button class="del" data-act="del-pt" data-i="' + i + '" aria-label="Supprimer ce relevé">×</button>' : '') +
       '</div>';
+      if (i > 0) {
+        if (p.open) {
+          h += '<div class="eaubloc"><div class="row">' +
+            '<label class="f"><span>Eau ajoutée L</span><input data-pt="' + i + '" data-cle="ajL" type="number" inputmode="decimal" step="1" value="' + (p.ajL === null || p.ajL === undefined ? '' : p.ajL) + '"></label>' +
+            '<label class="f"><span>à °C</span><input data-pt="' + i + '" data-cle="ajT" type="number" inputmode="decimal" step="0.1" value="' + (p.ajT === null || p.ajT === undefined ? '' : p.ajT) + '"></label>' +
+            '<label class="f"><span>Niveau</span><select data-pt="' + i + '" data-cle="ajMode">' +
+              ['Remplacement', 'En plus'].map(function (v) { return '<option value="' + v + '"' + (p.ajMode === v ? ' selected' : '') + '>' + (v === 'Remplacement' ? 'stable' : 'monte') + '</option>'; }).join('') +
+            '</select></label>' +
+          '</div><p class="note" style="margin-top:8px">Compté comme survenu juste après le relevé précédent.</p></div>';
+        } else {
+          h += '<div class="sous"><button class="lien" data-act="open-eau" data-i="' + i + '">+ j\'ai remis de l\'eau avant ce relevé</button></div>';
+        }
+      }
+      return h;
     }).join('');
+
     return '' +
       '<div class="lg">Nuit de refroidissement</div>' +
       '<div class="row">' + inp('date', 'Date', 'date', ff.date, 'f') +
-        '<div class="chips" style="align-items:flex-end">Couverture&nbsp;' + ['Oui', 'Non'].map(function (v) { return ch('fcouv', v, ff.couv); }).join('') + '</div></div>' +
+        '<label class="f"><span>Volume L</span><input data-form="f" data-cle="vol" type="number" inputmode="decimal" step="1" placeholder="' + D.volume + '" value="' + (ff.vol === null || ff.vol === undefined ? '' : ff.vol) + '"></label></div>' +
+      '<div class="chips">Couverture&nbsp;' + ['Oui', 'Non'].map(function (v) { return ch('fcouv', v, ff.couv); }).join('') + '</div>' +
+
       '<div class="lg">Relevés</div>' + lignes +
-      '<button class="btn ghost" data-act="add-pt">+ Ajouter un relevé</button>' +
+      '<button class="btn ghost tiny" data-act="add-pt">+ Ajouter un relevé</button>' +
+
+      '<div class="lg">Creux de la nuit</div>' +
+      '<div class="row">' +
+        '<label class="f"><span>Extérieur mini °C</span><input data-mini="1" data-cle="t" type="number" inputmode="decimal" step="0.1" value="' + (ff.mini.t === null || ff.mini.t === undefined ? '' : ff.mini.t) + '"></label>' +
+        '<label class="f"><span>vers</span><input data-mini="1" data-cle="h" type="time" value="' + esc(ff.mini.h) + '"></label>' +
+      '</div>' +
+      '<p class="note" style="margin-top:0">Sans ce creux, l\'app relie simplement tes relevés d\'extérieur en ligne droite : une seule mesure du matin ferait croire que le bain a passé la nuit entière à cette température-là. Avec un mini et son heure, la courbe descend puis remonte et la moyenne devient juste. Un thermomètre mini/maxi à quelques euros suffit ; sinon un relevé de plus vers 2 h fait le même travail.</p>' +
+
       '<div class="res">' +
         cel('Perte moyenne', f(r.perte, 2) + '<em>°C/h</em>', 'cold') +
-        cel('Écart moyen', f(r.ecMoy) + '<em>°C</em>', '') +
+        cel('Ext. moyen nuit', f(r.extMoy) + '<em>°C</em>', '') +
         cel('Constante k', f(r.k, 4) + '<em>/h</em>', 'cold') +
         cel('Demi-écart en', f(r.demi) + '<em>h</em>', '') +
       '</div>' +
@@ -444,6 +708,7 @@
       '<button class="btn cold" data-act="save-f">Enregistrer le refroidissement</button>';
   }
 
+  /* --- panneau bilan --- */
   function panBilan() {
     var h = '';
     if (!D.chauffes.length && !D.froids.length) {
@@ -455,7 +720,8 @@
       D.chauffes.forEach(function (c) {
         var r = calcChauffe(c);
         if (r.kwhkg === null) return;
-        (par[c.essence] = par[c.essence] || []).push(r);
+        var e = essenceDe(c);
+        (par[e] = par[e] || []).push(r);
       });
       Object.keys(par).forEach(function (e) {
         var l = par[e];
@@ -472,7 +738,8 @@
         var r = calcChauffe(c);
         h += '<div class="card"><h3>' + esc(c.date) + ' <small>' + esc(c.poele) + '</small></h3>' +
           '<p>' + f(c.t1) + ' → ' + f(c.t2) + ' °C en <b>' + f(r.h) + ' h</b> · ext. ' + f(c.tx) + ' °C<br>' +
-          esc(c.essence) + ' <b>' + f(c.kg) + ' kg</b> · ' + f(r.kwhkg, 2) + ' kWh/kg' +
+          (c.ajL ? 'eau ajoutée ' + f(c.ajL, 0) + ' L à ' + f(c.ajT) + ' °C, départ corrigé ' + f(r.tdep) + ' °C<br>' : '') +
+          resumeBois(c) + ' · <b>' + f(r.kg, 1) + ' kg</b> · ' + f(r.kwhkg, 2) + ' kWh/kg' +
           (c.note ? '<br>' + esc(c.note) : '') + '</p>' +
           '<button class="rm" data-act="rm-c" data-id="' + c.id + '">Supprimer</button></div>';
       });
@@ -490,11 +757,24 @@
       D.froids.slice().reverse().forEach(function (r0) {
         var r = calcFroid(r0);
         h += '<div class="card"><h3>' + esc(r0.date) + ' <small>couverture ' + esc(r0.couv).toLowerCase() + '</small></h3>' +
-          '<p>' + r.n + ' relevés · perte <b>' + f(r.perte, 2) + ' °C/h</b> · écart moyen ' + f(r.ecMoy) + ' °C<br>k = <b>' + f(r.k, 4) + '</b> /h' +
+          '<p>' + r.n + ' relevés · perte <b>' + f(r.perte, 2) + ' °C/h</b> · ext. moyen ' + f(r.extMoy) + ' °C' +
+          (r.mini ? ' (mini pris en compte)' : '') + '<br>k = <b>' + f(r.k, 4) + '</b> /h' +
           (r0.note ? '<br>' + esc(r0.note) : '') + '</p>' +
           '<button class="rm" data-act="rm-f" data-id="' + r0.id + '">Supprimer</button></div>';
       });
     }
+
+    h += '<div class="lg">Réglages du bois</div>' +
+      '<div class="row">' +
+        '<label class="f"><span>Brouette pleine L</span><input data-reg="volBr" type="number" inputmode="decimal" step="1" value="' + D.volBr + '"></label>' +
+        '<label class="f"><span>Bois plein dans la brouette %</span><input data-reg="taux" type="number" inputmode="decimal" step="1" value="' + D.taux + '"></label>' +
+      '</div>' +
+      '<div class="card"><p>Une brouette pleine de chêne à 20 % ≈ <b>' +
+        f(kgApport({ essence: 'Chêne', mode: 'Brouette', br: 1 }, 20), 1) + ' kg</b><br>' +
+        'une bûche de 30 cm, Ø 10 cm ≈ <b>' +
+        f(kgApport({ essence: 'Chêne', mode: 'Bûches', nb: 1, len: 30, diam: 10 }, 20), 2) + ' kg</b></p></div>' +
+      '<p class="note">Le reste des bûches ne remplit pas toute la brouette : le pourcentage est la part de bois plein, vides compris. 60 % est la valeur usuelle pour des bûches en vrac. Pèse une brouette pleine une fois, ajuste ce pourcentage jusqu\'à retrouver ton chiffre, et toutes les fiches deviennent justes d\'un coup.</p>';
+
     h += '<div class="lg">Export et sauvegarde</div>' +
       '<textarea class="csv" id="csv" placeholder="Le tableau ou la sauvegarde apparaîtra ici. Pour restaurer, colle une sauvegarde JSON dans cette zone puis appuie sur Restaurer."></textarea>' +
       '<button class="btn ghost" data-act="csv">Générer le CSV</button>' +
@@ -512,33 +792,72 @@
     var v = document.getElementById('vol');
     if (v) v.onchange = function () { D.volume = n(v.value) || 850; sauver(); vue(); };
 
+    app.querySelectorAll('[data-reg]').forEach(function (el) {
+      el.oninput = function () { D[el.dataset.reg] = n(el.value) || D[el.dataset.reg]; };
+      el.onchange = function () { sauver().then(vue); };
+    });
+
     app.querySelectorAll('[data-form]').forEach(function (el) {
       el.oninput = function () {
         var o = el.dataset.form === 'c' ? fc : ff;
         var cle = el.dataset.cle;
         o[cle] = (el.type === 'number') ? n(el.value) : el.value;
-        if (el.type === 'number' && ['t1', 't2', 'tx'].indexOf(cle) >= 0) majLive();
-        else if (el.type !== 'text') majLive();
+        if (cle === 'hum') majKg();
+        majLive();
+      };
+    });
+    app.querySelectorAll('[data-b]').forEach(function (el) {
+      el.oninput = function () {
+        var a = fc.bois[+el.dataset.b];
+        a[el.dataset.cle] = (el.tagName === 'SELECT') ? el.value : n(el.value);
+        majKg(); majLive();
       };
     });
     app.querySelectorAll('[data-pt]').forEach(function (el) {
       el.oninput = function () {
         var p = ff.pts[+el.dataset.pt];
-        p[el.dataset.cle] = el.type === 'number' ? n(el.value) : el.value;
+        p[el.dataset.cle] = (el.tagName === 'SELECT') ? el.value : (el.type === 'number' ? n(el.value) : el.value);
+        majLive();
+      };
+    });
+    app.querySelectorAll('[data-mini]').forEach(function (el) {
+      el.oninput = function () {
+        ff.mini[el.dataset.cle] = el.type === 'number' ? n(el.value) : el.value;
         majLive();
       };
     });
     app.querySelectorAll('[data-chip]').forEach(function (b) {
       b.onclick = function () {
-        var c = b.dataset.chip;
-        if (c === 'fcouv') ff.couv = b.dataset.val; else fc[c] = b.dataset.val;
+        var c = b.dataset.chip, val = b.dataset.val;
+        if (c === 'fcouv') ff.couv = val;
+        else if (c === 'hum') fc.hum = n(val);
+        else fc[c] = val;
         vue();
       };
+    });
+    app.querySelectorAll('[data-bmode]').forEach(function (b) {
+      b.onclick = function () { fc.bois[+b.dataset.bmode].mode = b.dataset.val; vue(); };
+    });
+    app.querySelectorAll('[data-bfrac]').forEach(function (b) {
+      b.onclick = function () { fc.bois[+b.dataset.bfrac].br = n(b.dataset.val); vue(); };
+    });
+    app.querySelectorAll('[data-blen]').forEach(function (b) {
+      b.onclick = function () { fc.bois[+b.dataset.blen].len = n(b.dataset.val); vue(); };
     });
     app.querySelectorAll('[data-act]').forEach(function (b) { b.onclick = function () { act(b); }; });
   }
 
   // met à jour les cases de résultat sans reconstruire le formulaire (le clavier reste ouvert)
+  function majKg() {
+    var pan = app.querySelector('.pan[data-p="chauffe"]');
+    if (!pan) return;
+    fc.bois.forEach(function (a, i) {
+      var e = pan.querySelector('[data-kg="' + i + '"]');
+      if (e) e.textContent = '≈ ' + f(kgApport(a, fc.hum), 1) + ' kg';
+    });
+    var t = pan.querySelector('#kgtot');
+    if (t) t.textContent = f(kgTotal(fc), 1) + ' kg';
+  }
   function majLive() {
     var pan = app.querySelector('.pan[data-p="' + onglet + '"]');
     if (!pan) return;
@@ -547,11 +866,13 @@
       var r = calcChauffe(fc);
       remplir(res, [f(r.dT) + '<em>°C</em>', f(r.h) + '<em>h</em>', f(r.vit) + '<em>°C/h</em>',
                     f(r.kwh, 2) + '<em>kWh</em>', f(r.kwhkg, 2) + '<em>kWh/kg</em>', f(r.kgdeg, 2) + '<em>kg/°C</em>']);
+      var td = pan.querySelector('#tdep'); if (td) td.textContent = f(r.tdep);
+      var vf = pan.querySelector('#vfin'); if (vf) vf.textContent = f(r.vol, 0);
       var j = pan.querySelector('.jauge');
       if (j) j.outerHTML = jauge(fc.tx, fc.t2);
     } else if (onglet === 'froid') {
       var q = calcFroid(ff);
-      remplir(res, [f(q.perte, 2) + '<em>°C/h</em>', f(q.ecMoy) + '<em>°C</em>',
+      remplir(res, [f(q.perte, 2) + '<em>°C/h</em>', f(q.extMoy) + '<em>°C</em>',
                     f(q.k, 4) + '<em>/h</em>', f(q.demi) + '<em>h</em>']);
     }
   }
@@ -563,19 +884,29 @@
 
   function act(b) {
     var a = b.dataset.act;
-    if (a === 'add-pt') {
-      ff.pts.push({ h: hm(), te: null, tx: ff.pts[ff.pts.length - 1].tx });
+    if (a === 'add-b') {
+      fc.bois.push(apportVide(fc.bois.length ? fc.bois[fc.bois.length - 1].essence : 'Chêne'));
+      vue();
+    } else if (a === 'del-b') {
+      fc.bois.splice(+b.dataset.i, 1); vue();
+    } else if (a === 'add-pt') {
+      var d = ff.pts[ff.pts.length - 1];
+      ff.pts.push({ h: '', te: null, tx: d ? d.tx : null });
       vue();
     } else if (a === 'del-pt') {
       ff.pts.splice(+b.dataset.i, 1); vue();
+    } else if (a === 'open-eau') {
+      var p = ff.pts[+b.dataset.i];
+      p.open = true; if (!p.ajMode) p.ajMode = 'Remplacement';
+      vue();
     } else if (a === 'save-c') {
       if (fc.t1 === null || fc.t2 === null) { flash('Il manque les températures de l\'eau.'); return; }
       fc.id = Date.now();
       D.chauffes.push(JSON.parse(JSON.stringify(fc)));
       sauver().then(function () {
-        fc = { date: auj(), h1: '', h2: '', t1: null, t2: null, tx: fc.tx,
-               poele: fc.poele, essence: fc.essence, kg: null, hum: fc.hum,
-               couv: fc.couv, ciel: fc.ciel, vent: fc.vent, note: '' };
+        fc = chauffeVide({ tx: fc.tx, poele: fc.poele, hum: fc.hum,
+                           essence: fc.bois.length ? fc.bois[0].essence : 'Chêne',
+                           couv: fc.couv, ciel: fc.ciel, vent: fc.vent });
         onglet = 'bilan'; vue(); flash('Chauffe enregistrée.');
       });
     } else if (a === 'save-f') {
@@ -584,7 +915,7 @@
       ff.id = Date.now();
       D.froids.push(JSON.parse(JSON.stringify(ff)));
       sauver().then(function () {
-        ff = { date: auj(), couv: ff.couv, pts: [ { h: '', te: null, tx: null }, { h: '', te: null, tx: null } ], note: '' };
+        ff = froidVide({ couv: ff.couv });
         onglet = 'bilan'; vue(); flash('Refroidissement enregistré.');
       });
     } else if (a === 'rm-c') {
@@ -604,6 +935,8 @@
         var o = JSON.parse(t);
         if (!o || !Array.isArray(o.chauffes)) throw new Error('format');
         D.volume = o.volume || 850;
+        D.volBr = o.volBr || 85;
+        D.taux = o.taux || 60;
         D.chauffes = o.chauffes;
         D.froids = Array.isArray(o.froids) ? o.froids : [];
         sauver().then(function () { vue(); flash('Sauvegarde restaurée.'); });
@@ -614,19 +947,21 @@
   }
 
   function csv() {
-    var l = ['type;date;t_eau_debut;t_eau_fin;t_ext;duree_h;essence;masse_kg;humidite;poele;couverture;ciel;vent;kwh_eau;kwh_par_kg;kg_par_degre;k_par_h;perte_C_par_h;notes'];
+    var l = ['type;date;t_eau_debut;t_depart_corrige;t_eau_fin;t_ext;t_ext_moyen;volume_L;eau_ajoutee_L;t_eau_ajoutee;duree_h;essence;detail_bois;masse_kg;humidite;poele;couverture;ciel;vent;kwh_eau;kwh_par_kg;kg_par_degre;rendement_pct;k_par_h;perte_C_par_h;notes'];
     D.chauffes.forEach(function (c) {
       var r = calcChauffe(c);
-      l.push(['chauffe', c.date, c.t1, c.t2, c.tx, f(r.h, 2), c.essence, c.kg, c.hum, c.poele, c.couv, c.ciel, c.vent,
-              f(r.kwh, 2), f(r.kwhkg, 3), f(r.kgdeg, 3), '', '', c.note].join(';'));
+      l.push(['chauffe', c.date, c.t1, f(r.tdep, 1), c.t2, c.tx, '', f(r.vol, 0), c.ajL, c.ajT, f(r.h, 2),
+              essenceDe(c), resumeBois(c).replace(/;/g, ','), f(r.kg, 2), c.hum, c.poele, c.couv, c.ciel, c.vent,
+              f(r.kwh, 2), f(r.kwhkg, 3), f(r.kgdeg, 3), f(r.rend, 0), '', '', c.note].join(';'));
     });
     D.froids.forEach(function (x) {
       var r = calcFroid(x);
       var p0 = (x.pts[0] || {}), pN = (x.pts[x.pts.length - 1] || {});
-      l.push(['refroidissement', x.date, p0.te, pN.te, f(r.ecMoy, 1), f(heures(p0.h, pN.h), 2), '', '', '', '', x.couv, '', '',
-              '', '', '', f(r.k, 4), f(r.perte, 2), x.note].join(';'));
+      l.push(['refroidissement', x.date, p0.te, '', pN.te, '', f(r.extMoy, 1), f(r.volFin, 0), '', '',
+              f(heures(p0.h, pN.h), 2), '', '', '', '', '', x.couv, '', '',
+              '', '', '', '', f(r.k, 4), f(r.perte, 2), x.note].join(';'));
     });
-    return l.join('\n').replace(/null/g, '');
+    return l.join('\n').replace(/null/g, '').replace(/undefined/g, '');
   }
 
   charger().then(vue);
