@@ -1,3 +1,16 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E1D24">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Carnet du bain</title>
+</head>
+<body>
+
 <div id="app">
   <div class="boot">Chargement du carnet…</div>
 </div>
@@ -15,6 +28,14 @@
     --laiton: #C79A5B;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  html, body {
+    margin: 0;
+    background: var(--eau);
+    min-height: 100%;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   #app {
@@ -244,19 +265,24 @@
 
   /* ---------- stockage ---------- */
   function charger() {
-    return window.storage.get(CLE).then(function (r) {
-      if (r && r.value) {
-        var o = JSON.parse(r.value);
+    try {
+      var brut = localStorage.getItem(CLE);
+      if (brut) {
+        var o = JSON.parse(brut);
         D.volume = o.volume || 850;
         D.chauffes = o.chauffes || [];
         D.froids = o.froids || [];
       }
-    }).catch(function () { /* premier lancement : rien d'enregistré */ });
+    } catch (e) { /* premier lancement, ou stockage indisponible */ }
+    return Promise.resolve();
   }
   function sauver() {
-    return window.storage.set(CLE, JSON.stringify(D)).catch(function () {
-      flash('Enregistrement impossible — recopie tes chiffres avant de fermer.');
-    });
+    try {
+      localStorage.setItem(CLE, JSON.stringify(D));
+    } catch (e) {
+      flash('Enregistrement impossible — copie la sauvegarde JSON avant de fermer.');
+    }
+    return Promise.resolve();
   }
   function flash(msg) {
     var e = document.getElementById('flash');
@@ -474,7 +500,7 @@
       '<button class="btn ghost" data-act="csv">Générer le CSV</button>' +
       '<button class="btn ghost" data-act="json">Générer la sauvegarde JSON</button>' +
       '<button class="btn ghost" data-act="restore">Restaurer depuis la zone</button>' +
-      '<p class="note">La sauvegarde JSON se recolle telle quelle dans la version hébergée, et inversement. C\'est le seul format qui passe d\'une version à l\'autre : le CSV part vers le tableur, pas vers le carnet.</p>';
+      '<p class="note">Les données vivent dans le stockage du navigateur. Vider les données du site les efface : garde une sauvegarde JSON quelque part après chaque série de relevés.</p>';
     return h;
   }
 
@@ -606,3 +632,6 @@
   charger().then(vue);
 })();
 </script>
+
+</body>
+</html>
